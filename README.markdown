@@ -1,0 +1,1 @@
+# Minimal working example to explore sensitivity of SCDE error model fits and down stream analysis to cell grouping assumptions
