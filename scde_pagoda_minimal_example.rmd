@@ -6,11 +6,15 @@ bibliography: SCDE_example.bib
 
 ## Introduction
 
-This document presents a reproducible example of the differences in error model fit settings using the method SCDE [@kharchenko2014] with or without specifying the `group` argument (using the `scde.error.models` function).  When the `group` argument is specified, the error models are fit by only comparing cells with the same value of `group` to one another.  When the `group` argument is not specified, the error models are fit by comaparing all pairwise combinations (or a random subset there of if there are too many comparisons to consider) of cells to one another.  From the package documentation, the `groups` argument is described as follows: 
+This document presents a reproducible example of the differences in error model fit settings using the method SCDE [@kharchenko2014] with or without specifying the `group` argument (using the `scde.error.models` function).  When the `group` argument is specified, the error models are fit by only comparing cells with the same value of `group` to one another.  When the `group` argument is not specified, the error models are fit by comparing all pairwise combinations (or a random subset there of if there are too many comparisons to consider) of cells to one another.  From the package documentation, the `groups` argument is described as follows: 
 
 > an optional factor describing grouping of different cells. If provided, the cross-fits and the expected expression magnitudes will be determined separately within each group. The factor should have the same length as ncol(counts).
 
-The effect of fitting the error models within groups or across all cells in the dataset is illustrated in a minimal example that uses the example dataset provided in the `SCDE` R package and used in the vignette provided by the authors.  This dataset is a subset of the dataset used in the SCDE paper, and contains 20 mouse embryonic stem cells (ESC) and 20 mouse embryonic fibroblast (MEF) cells.  
+Additional explanation is provided by the differential expression (DE) tutorial of the `SCDE` package ([see the GitHub pages tutorial here](http://hms-dbmi.github.io/scde/diffexp.html)):
+
+> The fitting process relies on a subset of robust genes that are detected in multiple cross-cell comparisons. Here we supply the groups = sg argument, so that the error models for the two cell types are fit independently (using two different sets of "robust" genes). If the groups argument is omitted, the models will be fit using a common set.
+
+We are interested in how to decide which strategy to implement in practice. Toward this end, the effect of fitting the error models independently within groups or across all cells in the dataset is illustrated in a minimal example that uses the example dataset provided in the `SCDE` R package and used in the vignette provided by the authors.  This dataset is a subset of the dataset used in the SCDE paper, and contains 20 mouse embryonic stem cells (ESC) and 20 mouse embryonic fibroblast (MEF) cells. 
 
 The example dataset is fit with and without the `group` factor and the resulting effects on size factors, estimated read counts per cell, and downstream differential expression analysis are examined.  Specifically, the effective size factors for each cell resulting from each of these types of error model fitting is compared to standard DESeq library size factors.  The total reads per cell after adjusting for these factors using the `scde.expression.magnitude` function are also examined.  In addition, the number of genes identified as differentially expressed as well as the proportion of those that are down-regulated are also compared for the two error model fits.
 
@@ -176,14 +180,16 @@ sum(abs(DE.group$cZ) > 1.96)
 sum(abs(DE.all$cZ) > 1.96)
 ```
 
-# Direction of effect of significant DE genes
+## Direction of effect of significant DE genes
 Next we examine the total number and proportion of the DE genes that are in the down-regulated direction.  Here we refer to down-regulation in the context ESC to MEF cells, so down-regulated genes are those with significantly higher expression in MEFs cells compared to ESCs.  
 
 ```{r}
 sum(DE.group$cZ < -1.96)  
 sum(DE.all$cZ < -1.96)
+```
 
-# proportion of DE genes that are down-regulated
+## Proportion of DE genes that are down-regulated
+```{r}
 sum(DE.group$cZ < -1.96) / sum(abs(DE.group$cZ) > 1.96)
 sum(DE.all$cZ < -1.96) / sum(abs(DE.all$cZ) > 1.96)
 ```
