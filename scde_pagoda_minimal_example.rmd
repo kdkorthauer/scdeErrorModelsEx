@@ -1,0 +1,221 @@
+---
+title: "SCDE Sensitivity to 'Grouping' Variable: A Minimal Working Example"
+output: html_document
+bibliography: SCDE_example.bib
+---
+
+## Introduction
+
+This document presents a reproducible example of the differences in error model fit settings using the method SCDE [@kharchenko2014] with or without specifying the `group` argument (using the `scde.error.models` function).  When the `group` argument is specified, the error models are fit by only comparing cells with the same value of `group` to one another.  When the `group` argument is not specified, the error models are fit by comaparing all pairwise combinations (or a random subset there of if there are too many comparisons to consider) of cells to one another.  From the package documentation, the `groups` argument is described as follows: 
+
+> an optional factor describing grouping of different cells. If provided, the cross-fits and the expected expression magnitudes will be determined separately within each group. The factor should have the same length as ncol(counts).
+
+The effect of fitting the error models within groups or across all cells in the dataset is illustrated in a minimal example that uses the example dataset provided in the `SCDE` R package and used in the vignette provided by the authors.  This dataset is a subset of the dataset used in the SCDE paper, and contains 20 mouse embryonic stem cells (ESC) and 20 mouse embryonic fibroblast (MEF) cells.  
+
+The example dataset is fit with and without the `group` factor and the resulting effects on size factors, estimated read counts per cell, and downstream differential expression analysis are examined.  Specifically, the effective size factors for each cell resulting from each of these types of error model fitting is compared to standard DESeq library size factors.  The total reads per cell after adjusting for these factors using the `scde.expression.magnitude` function are also examined.  In addition, the number of genes identified as differentially expressed as well as the proportion of those that are down-regulated are also compared for the two error model fits.
+
+## Load the necessary packages and dataset
+
+First, we load the necessary packages `SCDE` as well as `EBSeq` (in order to use the `MedianNorm` function that obtains DESeq library sizes).
+
+```{r}
+library(scde)
+library(EBSeq)  # in order to use MedianNorm function that obtains DESeq library sizes
+```
+
+Next, we load example dataset that is provided as part of the `SCDE` package
+
+```{r}
+data(es.mef.small)
+dim(es.mef.small)
+```
+
+We'll also set a random seed since inference involves sampling from a posterior distribution
+
+```{r}
+set.seed(9394)
+```
+
+## Define the biological condition `group` variable and filter out bad cells or genes
+
+Here we define the `group` factor that corresponds to the biological condition of interest.  In this dataset, the biological condition of interest is cell type (ESC and MEF).  The following line of code to define this factor is taken directly from the differential expression (DE) tutorial of the `SCDE` package ([see the GitHub pages tutorial here](http://hms-dbmi.github.io/scde/diffexp.html)).
+
+```{r}
+sg <- factor(gsub("(MEF|ESC).*", "\\1", colnames(es.mef.small)), levels = c("ESC", "MEF"))
+```
+
+We give this group factor names that correspond to the sample names of our dataset.
+
+```{r}
+names(sg) <- colnames(es.mef.small)
+```
+
+Filter out any cells with especially small library sizes (below 1000), any genes with minimum number of reads per cell fewer than 1, and any genes detected in fewer than 1 cell.  This line is also taken directly from the DE tutorial mentioned above.
+
+```{r}
+cd <- clean.counts(es.mef.small, min.lib.size=1000, min.reads = 1, min.detected = 1)
+dim(cd)
+```
+This step does not remove any cells, but removes 2755 genes that are not detected in any of the 40 cells.
+
+## Fit single cell error models with and without the grouping variable
+
+Here we fit the single cell error models with the `scde.error.models` function.  This involves estimation of parameters by comparing many pairwise combinations of cells, and can take a considerable amount of time, especially if multiple cores are not used.
+
+First, create the error models object when fitting is done within biological group.
+
+```{r}
+err.group <- scde.error.models(counts = cd, groups = sg, n.cores = 4, 
+                             threshold.segmentation = TRUE, 
+                             save.crossfit.plots = FALSE, 
+                             save.model.plots = FALSE, 
+                             verbose = 0, 
+                             linear.fit=TRUE)
+```
+
+Next, create the error models object when fitting is done on the entire set of cells (ignoring biological group).
+
+```{r}
+err.all <- scde.error.models(counts = cd, n.cores = 4, 
+                             threshold.segmentation = TRUE, 
+                             save.crossfit.plots = FALSE, 
+                             save.model.plots = FALSE, 
+                             verbose = 0, 
+                             linear.fit=TRUE)
+```
+
+## Size factor comparison with DESeq library size factors for each error model fit
+
+The `corr.b` parameter from the error model fit represents the log-scaled SCDE size factor.  We can extract these cell-specific estimates with the `$` operator from each of the error model fits obtained above.
+
+```{r}
+scde.sizes.group <- exp(err.group$corr.b)
+scde.sizes.all <- exp(err.all$corr.b)
+```
+
+In addition, we can obtain the standard DESeq library size factors by applying the `MedianNorm` function in the R package `EBSeq` to the object containing the raw (filtered) counts above.
+
+```{r}
+deseq.sizes <- MedianNorm(cd)
+```
+
+Finally, we can plot the SCDE size factor estimates from the model fits with and without the `group` factor compared to the DESeq size factors.
+
+```{r fig.width=10, fig.height=6}
+par(mfrow=c(1,2))
+plot(deseq.sizes, scde.sizes.group, col=c("red", "blue")[sg], pch=20,
+      xlab="DESeq Size Factors", ylab="SCDE Size Factors",
+      main="Fit within biological group")
+legend(0.1, 1.65, legend=c("ESC", "MEF"), col=c("red", "blue"), pch=c(20,20))
+plot(deseq.sizes, scde.sizes.all, col=c("red", "blue")[sg], pch=20,
+      xlab="DESeq Size Factors", ylab="SCDE Size Factors",
+      main="Overall fit (no group factor)")
+```
+
+## Estimated read counts per cell for each error model fit
+
+We use the `scde.expression.magnitude` function to obtain the scaled expression magnitude estimates for each error model fit. This function scales the counts by the size factor estimates obtained in the previous section. 
+
+```{r}
+est.counts.group <- exp(scde.expression.magnitude(err.group, counts = cd))
+est.counts.all <- exp(scde.expression.magnitude(err.all, counts = cd))
+```
+
+For each biological group, plot the raw read totals as well as the total estimated counts adjusted for each error model fit obtained above.
+
+```{r, fig.width=10, fig.height=4}
+par(mfrow=c(1,3))
+boxplot(colSums(cd) ~ sg, main="Raw Counts", ylab="Read Total")
+boxplot(colSums(est.counts.group) ~ sg, 
+          main="Estimated Counts from within-group error model", 
+          ylab="Read Total")
+boxplot(colSums(est.counts.all) ~ sg, 
+          main="Estimated Counts from overall error model",
+          ylab="Read Total")
+```
+  
+## Differential Expression analysis with each error model fit 
+
+Now, we evaluate the downstream effects of these differences in size factor estimates and global differences in estimated expression magnitudes.  For each model fit (within-group and overall) we perform a differential expression analysis.
+
+The first step in testing for DE using the SCDE model is to estimate the gene expression prior. This is done with the `scde.expression.prior` function.
+
+```{r}
+prior.group <- scde.expression.prior(models = err.group, counts = cd, length.out = 400, 
+                                   show.plot = FALSE, max.quantile = 1 - 0.0001)
+prior.all <- scde.expression.prior(models = err.all, counts = cd, length.out = 400,
+                                   show.plot = FALSE, max.quantile = 1 - 0.0001)
+```  
+
+Next, the error model and prior estimate are sent to the `scde.expression.difference' function to obtain test statistics for each gene having differential expression for the groups defined by the biological conditon.
+
+```{r}
+DE.group <- scde.expression.difference(models = err.group, counts = cd, prior = prior.group,
+                                      groups  =  sg, n.randomizations  =  200, 
+                                      n.cores  =  4, verbose  =  0)
+DE.all <- scde.expression.difference(models = err.all, counts = cd, prior = prior.all,
+                                      groups  =  sg, n.randomizations  =  200, 
+                                      n.cores  =  4, verbose  =  0)
+```
+
+For each of the DE objects, make sure that the sign of the adjusted Z-score is consistent with that of Z in order to distinguish the two directions of effect (up- versus down-regulated).
+
+```{r}
+DE.group$cZ <- sign(DE.group$Z)*qnorm(p.adjust(pnorm(abs(DE.group$Z), lower.tail = FALSE), 
+                                           method = "BH"), lower.tail = FALSE)
+DE.all$cZ <- sign(DE.all$Z)*qnorm(p.adjust(pnorm(abs(DE.all$Z), lower.tail = FALSE), 
+                                           method = "BH"), lower.tail = FALSE)
+```
+
+## Total number of DE genes for each error model fit
+
+Here we examine the total number of DE genes identified for each type of error model fit (with FDR controlled at the 0.05 level):
+
+```{r}
+sum(abs(DE.group$cZ) > 1.96)
+sum(abs(DE.all$cZ) > 1.96)
+```
+
+# Direction of effect of significant DE genes
+Next we examine the total number and proportion of the DE genes that are in the down-regulated direction.  Here we refer to down-regulation in the context ESC to MEF cells, so down-regulated genes are those with significantly higher expression in MEFs cells compared to ESCs.  
+
+```{r}
+sum(DE.group$cZ < -1.96)  
+sum(DE.all$cZ < -1.96)
+
+# proportion of DE genes that are down-regulated
+sum(DE.group$cZ < -1.96) / sum(abs(DE.group$cZ) > 1.96)
+sum(DE.all$cZ < -1.96) / sum(abs(DE.all$cZ) > 1.96)
+```
+## SCDE makes it clear that you can't adjust for batch effects in confounded designs
+
+Define the batch indicator.  In this dataset, unfortunately, the cell types were profiled in distinct technical batches.  This means the condition grouping variable is identical to the batch variable.  This means that differences between the two groups of cells may be due to cell type, or they may be due to technical variation in batch, but we cannot tell the difference.  If we try to correct for batch variation using SCDE, it will correctly remind us that it isn't possible.  
+
+```{r}
+batch <- sg
+DE.batch.adjusted <- scde.expression.difference(models = err.all, counts = cd, prior = prior.all,
+                                      groups  =  sg, n.randomizations  =  200, 
+                                      n.cores  =  4, verbose  =  0,
+                                      batch = batch)
+```
+
+In earlier versions of the code, this error message was worded more strongly:
+
+> ERROR: cannot control for batch effect, as some batches are found only in one group:
+
+The line of code producing this error message has been commented out in the most recent version (line 342 of [functions.R file](https://github.com/hms-dbmi/scde/blob/master/R/functions.R) on github).
+
+Despite the warning(s), SCDE will still return differential expression results adjusted for batch.  But as we can see by examining them, all differences between groups have been removed and we are left with log fold-change estimates of zero for every gene (the `$mle` slot of the expression difference object contains log fold-change estimates).  
+
+```{r}
+range(abs(DE.batch.adjusted$batch.adjusted$mle))
+```
+
+## R session information
+
+```{r}
+sessionInfo()
+```
+
+## References
+
